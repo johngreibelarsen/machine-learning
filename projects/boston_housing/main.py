@@ -28,8 +28,9 @@ def predictTrials(X, y, fitter, data):
 
     print "Range in prices: ${:,.2f}".format(max(prices) - min(prices))
     ndPrices = np.array(prices)
-    print "Mean price: ${:,.2f}".format(ndPrices.mean())
+    print "Mean price: ${:,.2f}".format(ndPrices.median())
     print "Standard Variation: ${:,.2f}".format(ndPrices.std())
+    ndPrices.min()
     
         
 def performance_metric(X, y):
