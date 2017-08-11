@@ -45,7 +45,6 @@ class LearningAgent(Agent):
         else:
             self.epsilon = self.epsilon * 0.98
             #self.epsilon = self.epsilon - 0.05
-            print("Epsilon = {}",format(self.epsilon))
 
         return None
 
@@ -58,9 +57,6 @@ class LearningAgent(Agent):
         waypoint = self.planner.next_waypoint() # The next waypoint 
         inputs = self.env.sense(self)           # Visual input - intersection light and traffic
         deadline = self.env.get_deadline(self)  # Remaining deadline
-        print(waypoint)
-        print(inputs)
-        print(deadline)
 
         ########### 
         ## DONE ##
@@ -121,16 +117,13 @@ class LearningAgent(Agent):
         action = None
         if (self.Q.has_key(state)):
             actionsAndQsForState = self.Q.get(state)
-            print("actionsAndQsForState: {}".format(actionsAndQsForState))
             maxValue = max(actionsAndQsForState.values())
             maxKeys = [key for key, value in actionsAndQsForState.items() if value == maxValue]
             if (len(maxKeys) > 1):
                 indexToReturn = random.randint(0, len(maxKeys) - 1)
                 action = maxKeys[indexToReturn]
-                print("Best key1: {}".format(action))
             else:
                 action = maxKeys[0]
-                print("Best key2: {}".format(action))
         else:
             raise ValueError("No such state in current Q-table, state received: {}, Q-table: ", state, self.Q)
 
@@ -155,14 +148,11 @@ class LearningAgent(Agent):
         if (self.learning == True):
             useHighestQ = False if self.epsilon > random.random() else True
             if (useHighestQ):
-                print("Q Dict: {}".format(self.Q))
                 action = self.action_for_highestQ(state)
             else:
                 action = random.choice(Environment.valid_actions)
         else:
             action = random.choice(Environment.valid_actions)
-        
-        print("Random action choosen: {}".format(action))
         
         return action
 
@@ -171,7 +161,6 @@ class LearningAgent(Agent):
         """ The learn function is called after the agent completes an action and
             receives a reward. This function does not consider future rewards 
             when conducting learning. """
-        print("in learn: received state: {}, action: {}, reward: {}".format(state, action, reward))
         ########### 
         ## DONE ##
         ###########
