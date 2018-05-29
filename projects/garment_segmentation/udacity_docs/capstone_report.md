@@ -166,7 +166,6 @@ With the U-net model in place the next phase is to optimize the parameters of th
   * Training length (number of epochs)
   * Optimization algorithms (what algorithm to use for learning)
   * Learning rate (how fast to learn; this can be dynamic)
-  * Regularization (prevents the model being dominated by a few nodes)
 * Neural network architecture
   * Number of layers
   * Layer types (convolution, fully-connected, batch or pooling)
@@ -188,13 +187,13 @@ Two different benchmarks will be used to compare our solution against:
 
 * Second benchmark comes from the [Carvana Image Masking Challenge](https://www.kaggle.com/c/carvana-image-masking-challenge). Not exactly the same domain but conceptually a very similar problem. I would argue however that garments are more challenging than cars due to various fabrics, translucent materials, lace, fur etc. Nevertheless I hope to match scores as seen in the Carvana challenge where the winner demonstrated a Dice score around 99.7%
 
-So the aim is a Dice score > 98.32% and close to 99.7%.
+So the aim is a Dice score > 98.32% and as close to 99.7% as possible.
 
 ## III. Methodology
 _(approx. 3-5 pages)_
 
 ### Data Preprocessing
-The preprocessing done in the separate “preprocessing” notebook consists of the following steps:
+The preprocessing done in the separate preprocessing notebook, find it here Garment_Segmentation_Preprocessing.ipynb, consists of the following steps:
 1. Turning the cutouts into proper binary segmentation masks by extracting the Alpha channel from the RGBA input
 2. Split the original garment image set into training and validation sets and with the equivalent split on the mask dataset 
 3. Load original garment images in color mode and masks in gray scale mode. Actually we will also run an experiment to check if one mode is preferred over the other on the original garment images
@@ -211,33 +210,946 @@ Note: it is worth pointing out that all our data has the same resolution, namely
 
 
 ### Implementation
-In this section, the process for which metrics, algorithms, and techniques that you implemented for the given data will need to be clearly documented. It should be abundantly clear how the implementation was carried out, and discussion should be made regarding any complications that occurred during this process. Questions to ask yourself when writing this section:
-- _Is it made clear how the algorithms and techniques were implemented with the given datasets or input data?_
-- _Were there any complications with the original metrics or techniques that required changing prior to acquiring a solution?_
-- _Was there any part of the coding process (e.g., writing complicated functions) that should be documented?_
+#### Introducing the U-Net model
+The U-Net paper (https://arxiv.org/abs/1505.04597) present itself as a way to do image segmentation for biomedical data. It turns out you can use it for various image segmentation problems such as the one we will work on. In our case, using a U-Net is a good choice because of the lack of training data. This neural network architecture has revealed to be very good in this situation. U-Nets have an ability to learn in environments of low to medium quantities of training data, and the amount of training data available to us is considered low.
+
+A U-Net is like a convolutional autoencoder, but it also has skip-like connections with the feature maps located before the bottleneck layer, in such a way that in the decoder part some information comes from previous layers, bypassing the compressive bottleneck.
+
+See the figure below, taken from the official paper of the U-Net , which also illustrates why it is called a U-Net model:
+<img src='./u-net_cnn.png'>
+
+Thus, in the decoder, data is not only recovered from a compression, but is also concatenated with the information’s state before it is passed into the compression bottleneck so as to augment context for the next decoding layers to come. That way, the neural networks still learns to generalize in the compressed latent representation (located at the bottom of the “U” shape in the figure), but also recovers its latent generalizations to a spatial representation with the proper per-pixel semantic alignment in the right part of the U of the U-Net.
+
+The implementation is done in a separate implementation notebook, find it here unet_models.ipynb, consists of the following high level steps:
+* Develop simplest possible model and show it can learn
+* Develop basic model with high entropic capacity and demonstrate its performance
+* Introduce the final model that will subsequently undergo fine tuning and refinement
+
+
+#### About the simplest possible U-Net model:
+
+Encoding:
+
+- it will receive as input a color image with a resolution of 256x256 so input 256x256x3
+- it will have only one layer for encoding in form of a block consisting of:
+   - 2D convolution consisting of 32 filters, a (3, 3) kernel, default strides of (1, 1), padding is same, meaning, output size is the same as input size, requires the filter window to slip outside input map, hence the need to pad
+  - a batch normalisation to handle covariance shift and helps the model converge faster, more on this later
+  - the traditional activation function of ReLU
+- next down-sampling the input via max polling (256x256 --> 128x128). Done to help over-fitting by providing an abstracted form of the representation, as well as, reduce the computational cost by reducing the number of parameters to learn and provides basic translation invariance to the internal representation
+- 
+Bottleneck:
+
+- follow the same principle as described above for the first block. The only difference is that here we generate 128 filters, that is, increases the depth of our feature map stack to 128
+
+Decoder:
+
+- upsampling of the feature map followed by a 2x2 convolution (“up-convolution”) that halves the number of feature channels (128x128) --> 256x256)
+- concatenation with the correspondingly cropped feature map from the contracting path. The cropping is necessary due to the loss of border pixels in every convolution
+- next followes our normal convolutional block
+
+Classification:
+
+- the final layer a 1x1 convolution is used to map each 32-component feature vector to one class, namely a garment class. In other words it is the probability per pixel of being garment or not.
+
+The model is visualized here and the code demonstrated below.
+<img src='./U-Net_model_small.png'>
+
+    def simple_unet_256_segmentation_model(input_shape=(256, 256, 3), num_classes=1):
+        inputs = Input(shape=input_shape) # 256
+    
+        down = Conv2D(32, (3, 3), padding='same')(inputs)
+        down = BatchNormalization()(down)
+        down = Activation('relu')(down)
+        down_pool = MaxPooling2D((2, 2), strides=(2, 2))(down) #128
+    
+        center = Conv2D(128, (3, 3), padding='same')(down_pool)
+        center = BatchNormalization()(center)
+        center = Activation('relu')(center) # center
+    
+        up = UpSampling2D((2, 2))(center)
+        up = concatenate([down, up], axis=3)
+        up = Conv2D(32, (3, 3), padding='same')(up)
+        up = BatchNormalization()(up)
+        up = Activation('relu')(up) # 256
+    
+        classify = Conv2D(num_classes, (1, 1), activation='sigmoid')(up)
+    
+        model = Model(inputs=inputs, outputs=classify)
+    
+        return model
+
+
+##### Introducing our own loss funtions
+
+The Dice coefficient (F1 score) is the main metrics for measuring the performance of the segmentation work (together with the IoU: intersection over Union). Reason for selecting this coefficient is that it is a well known, understood and accepted industry standard for measuring the performance of segmentation work.
+
+Dice coefficient = 2 * |X ∩ Y| / (|X|+|Y|)
+
+As we are aiming for a perfect overlap, dice coefficient of 1, why not build it into the loss function itself as illustrated in below code where we weigh the Dice coefficient 4 times above the BCE. We add BCE to the loss function as it is a binary problem in form of garment versus background. 
+
+    def dice_coeff(y_true, y_pred):
+        smooth = 1
+        y_true_f = K.flatten(y_true)
+        y_pred_f = K.flatten(y_pred)
+        intersection = K.sum(y_true_f * y_pred_f)
+        return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+    
+    def bce_dice_loss(y_true, y_pred):
+        loss = 0.5 * binary_crossentropy(y_true, y_pred) - 2*dice_coeff(y_true, y_pred)
+        return loss
+
+
+##### Compiling our model
+Next we ask the model to use RMSprop as optimizer with fixed learning rate of 3e-4. We tell the model to use our own loss function we just discussed and finally we select the metrics to use as the Dice coefficient along with pixel accuracy.
+
+
+    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, metrics=[dice_coeff, 'accuracy'])
+
+
+##### Training our model
+Finally we are ready to train out simple model. We train it my calling the fit method of the Keras Model. It it supplied with the four tensors (2 x training, 2 x validation) and a higher batch size which should help speed up convergence of the model. Additionally I have supplied three callback functions:
+
+* EarlyStopping as no reason to continue training a model that is not improving. Have set a patience to 20 meaning that if after 20 epochs the model has not improved its metric by at least 1e-4 then stop training any further
+* ModelCheckpoint to save the weights that brought about an improvement in our metric, here validation loss
+* TensorBoard to safe a log that can subsequently be analysed for metric improvements against epochs etc (advanced version of my simple plot function above)
+
+      callbacks = [EarlyStopping(monitor='val_loss', patience=20, verbose=2, min_delta=1e-4),
+                   ModelCheckpoint(monitor='val_loss', filepath='./weights/' + str(weight_file_name) + '.hdf5', 
+                                   save_best_only=True, save_weights_only=True),
+                  TensorBoard(log_dir='./logs')]
+      
+      
+      history = model.fit(orig_train_tensors, seg_train_tensors, batch_size=batch_size, epochs=epochs, verbose=1, 
+                validation_data=(orig_valid_tensors, seg_valid_tensors), callbacks=callbacks)
+
+
+
+##### Result
+This model works however it is not sufficiently complex that it can capture all the features in the garments. the performance of this model is illustrated in below table and figures. Further discussion of results are postponed to the **Final Results** section.
+
+<img src='./simple_model_graphs.png'>
+
+<table id="t01">
+  <tr>
+    <th>Train Loss</th>
+    <th>Train Acc.</th> 
+    <th>Train Dice</th>
+    <th>Valid Loss</th>
+    <th>Valid Acc.</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>-1.4932 &darr; </td>
+    <td>0.9693 &uarr; </td> 
+    <td>0.7761 &uarr; </td>
+    <td>-1.4023</td>
+    <td>0.9611</td>
+    <td>0.7373</td>
+  </tr>
+</table>
+
+Note: arrows indicates that the model starts overfitting in terms of constantly improving on the training data but can't generalise to validation data.   
+
+The simple model was not sufficiently complex that it could capture all the features in the garments. So to that effect we introduce the basic U-Net model.
+
+#### The basic U-Net model:
+
+This model is identical compared to the simple model in that it contains the same structure and the same elements. Only difference, it has many more layers and much bigger feature map sizes (much higher entropic capacity). In this 5 block-layer model we half the 2-D dimensions of the feature maps per layer but increase the amount of filters per layer by a factor of 2 or 4:
+
+Encoder (per block-layer, 4 in total):
+- Convolutional block (Con2D --> BN --> activation)
+- Max polling (1/2 the size (dimension) of the feature maps)
+
+Bottlenect:
+- The same just many more filters
+
+Decoder (per layer, 4 in total):
+- The same just many more filters
+
+All of this resulting in 61,963,281 trainable parameters - we have entropic capacity now. In terms of getting to a trainable result everything is kept like in the simple model case. For details see U-Net_Models.ipynb.
+
+##### Result
+This model works really well. The performance of this model is illustrated below. Further discussion of results are postponed to the **Final Results** section.
+
+<img src='./basic_model_graphs.png'>
+
+<table id="t01">
+  <tr>
+    <th>Train Loss</th>
+    <th>Train Acc.</th> 
+    <th>Train Dice</th>
+    <th>Valid Loss</th>
+    <th>Valid Acc.</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>-1.9826</td>
+    <td>0.9976</td> 
+    <td>0.9924</td>
+    <td>-1.9586</td>
+    <td>0.9960</td>
+    <td>0.9826</td>
+  </tr>
+</table>
+
+
+
+With this model we see a big improvement however we can do even better so I introduce our final model.
+
+#### The final U-Net model:
+
+The final model we will use going forwards comes from Heng CherKeng's constribution to the Kaggle Carvana Image Masking Challenge. He code was based on PyTorch but a Keras implementation was made available by Peter Giannakopoulos here: https://github.com/petrosgk/Kaggle-Carvana-Image-Masking-Challenge.
+No reason to reinvent the wheel so we gratefully thank both of them for sharing there work. 
+
+There model is very similar to our basic model. There are no new features we haven't already discussed. In this 6 block-layer model 2-D dimensions of the feature maps are consistently halved per layer while the number of filters are doubled. The main difference lies within a layer they use double and triple convolutional blocks versus our single convolutional block:
+
+Encoder (per layer, 5 in total):
+- 2 x Convolutional block (Con2D --> BN --> activation)
+- Max polling (1/2 the size of the feature maps)
+
+Bottleneck:
+- 2 x Convolutional block (Con2D --> BN --> activation) with more filters
+
+Decoder (per layer, 5 in total):
+- Upsampling and concatenation as before
+- 3 x Convolutional block (Con2D --> BN --> activation)- 
+
+
+##### Result
+This model works really really well. The performance of this model is illustrated below. Further discussion of results are postponed to the **Final Results** section.
+
+<img src='./final_model_graphs.png'>
+
+<table>
+  <tr>
+    <th>Train Loss</th>
+    <th>Train Acc.</th> 
+    <th>Train Dice</th>
+    <th>Valid Loss</th>
+    <th>Valid Acc.</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>-1.9872</td>
+    <td>0.9978</td> 
+    <td>0.9945</td>
+    <td>-1.9706</td>
+    <td>0.9967</td>
+    <td>0.9882</td>
+  </tr>
+</table>
+
+
+The model converges nicely and very fast and again with much less variation than earlier. This model is performing very well on our data, the extra layers and the extra convolutions have paid off!
 
 ### Refinement
-In this section, you will need to discuss the process of improvement you made upon the algorithms and techniques you used in your implementation. For example, adjusting parameters for certain models to acquire improved solutions would fall under the refinement category. Your initial and final solutions should be reported, as well as any significant intermediate results as necessary. Questions to ask yourself when writing this section:
-- _Has an initial solution been found and clearly reported?_
-- _Is the process of improvement clearly documented, such as what techniques were used?_
-- _Are intermediate and final solutions clearly reported as the process is improved?_
+
+With the well performing U-net model in place the next phase is to optimize the parameters of the model. We will touch on the following areas:
+* Preprocessing steps
+* Training parameters
+  * Learning rate (how fast to learn; this can be dynamic)
+  * Optimization algorithms (what algorithm to use for learning)
+* Image augmentation (invariance, zoom, coloration and intensity)
+* Minimizing noisy background 
+
+Note: We will discuss the effect of varying the classification threshold in the result section.
+
+#### Preprocessing steps
+Please note I will not go into great details regarding preprocessing as already discussed in the **Data Preprocessing** section and described in detail in the garment_segmentation_preprocessing notebook.
+
+##### Preprocessing results
+The following results are based on our 1084 samples trained at a resolution of 256 using our final model. Please note that the validation Dice is as reported from training the model however **all** other values are a result of running the predictor of that trained model (ex. Histogram Equalization Color) against the full dataset, 1084 samples, using the original image resolution 1152 x 1728. The Mean and Median Dice's reported can not be read as absolute values, most images where part of the training data, but they can be compared relative to each other. The various training notebooksand the associated validation Dice scores can be found here unet_no_mask_256_preprocessing_XXX.
+
+<table>
+  <tr>
+    <th>Preprocessing Method</th>
+    <th>Mean Valid Dice</th>
+    <th>Mean Dice</th> 
+    <th>Median Dice</th>
+    <th>Outlier Corrected Mean Dice</th>
+    <th>Outlier Corrected Median Dice</th>
+    <th>Outliers removed</th>
+  </tr>
+  <tr>
+    <td>Baseline Color (Mean/Std)</td>
+    <td>0.9882</td> 
+    <td>0.9907</td>
+    <td>0.9921</td>
+    <td>0.9917</td>
+    <td>0.9922</td>
+    <td>15</td>
+  </tr>
+  <tr>
+    <td>Baseline Color</td>
+    <td>0.9877</td> 
+    <td>0.9898</td>
+    <td>0.9915</td>
+    <td>0.9907</td>
+    <td>0.9916</td>
+    <td>7</td>
+  </tr>
+  <tr>
+    <td>Contrast Strech Color (p2p98)</td>
+    <td>0.9868</td> 
+    <td>0.9896</td>
+    <td>0.9915</td>
+    <td>0.9907</td>
+    <td>0.9915</td>
+    <td>8</td>
+  </tr>
+  <tr>
+    <td>Histogram Equalization Color</td>
+    <td>0.9861</td> 
+    <td>0.9900</td>
+    <td>0.9920</td>
+    <td>0.9912</td>
+    <td>0.9921</td>
+    <td>5</td>
+  </tr>
+  <tr>
+    <td>Contrast Strech Color (p10p90)</td>
+    <td>0.9855</td> 
+    <td>0.9902</td>
+    <td>0.9919</td>
+    <td>0.9912</td>
+    <td>0.9920</td>
+    <td>9</td>
+  </tr>
+  <tr>
+    <td>Resize Optimized Color</td>
+    <td>0.9845</td> 
+    <td>0.9916</td>
+    <td>0.9928</td>
+    <td>0.9923</td>
+    <td>0.9929</td>
+    <td>6</td>
+  </tr>
+  <tr>
+    <td>Baseline Gray</td>
+    <td>0.9845</td> 
+    <td>0.9892</td>
+    <td>0.9914</td>
+    <td>0.9905</td>
+    <td>0.9915</td>
+    <td>6</td>
+  </tr>
+  <tr>
+    <td>Contrast Strech Gray (p2p98)</td>
+    <td>0.9824</td> 
+    <td>0.9891</td>
+    <td>0.9915</td>
+    <td>0.9906</td>
+    <td>0.9916</td>
+    <td>7</td>
+  </tr>
+  <tr>
+    <td>Histogram Equalization Gray</td>
+    <td>0.9796</td> 
+    <td>0.9880</td>
+    <td>0.9910</td>
+    <td>0.9898</td>
+    <td>0.9911</td>
+    <td>5</td>
+  </tr>
+</table>
+
+First observation from this test clearly shows that for best performance color is the way to go. The more information contained in the 3 color channels is being used and performs much better that 1 gray channel, roughly 3 to 4 tens of a percent better.
+
+Second observation when resizing imagery always apply apropriate interpolation-algorithms:
+- Downsize: cv2.resize(img, (input_size, input_size), interpolation=cv2.INTER_AREA)
+- Upsize: cv2.resize(img, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
+Interpolation-algorithms are easy to apply and have one of the largest impacts on improving our performance. Using these algorithms should be consistent, meaning, apply when preparing the data for training but also when applying the predictor.
+
+Third observation is that centering and normalizing the data has a big positive effect and should be done despite relying heavily on batch normalization.
+
+Fourth observation is that contrast enhancing techniques are interesting and have potential but for our professional operated and equipped photo studios we don't really see any benefits. Considering also the added complexity to the solution it is not worth pursuing contrast enhancing techniques any further for our datasets. 
+
+
+#### Learning rate
+So far we have used a fixed learning rate of 3e-4. The truth is that this value has already been optimized by performing many trial runs and experiments. However what we can do is make it dynamic (futher details here <https://github.com/bckenstler/CLR> and here <http://ruder.io/deep-learning-optimization-2017/index.html#tuningthelearningrate>). So to this effect we introduce a declining cyclic learning rate defined by (contained in cyclic_learning_rate.py). The idea being that 1) once you have a good learning rate then gradually reducing it often improves the learning itself 2) cyclic learning rates increases the likelihood of not getting stuck in local minimum but rather finding a better 'global' minimum. Also  increasing the learning rate is an effective way of escaping saddle points:
+
+    def plateau_then_decl_triangular_lr(epochs):    
+        """
+            Given the inputs, calculates the lr that should be applicable for this epoch.
+            The algo will start out with a LR equal to the average of the min and max rates
+            for the first no. of plateau_steps. Hereafter the algo will start oscillating 
+            with a wave length at 2 x step_size and an ever declining amplitude (the minimal
+            LR is unaffected however the max LR will keep declining in an power based fashion) 
+        """
+        
+        if epochs < plateau_steps:
+            return (min_lr + max_lr)/2
+        
+        cycle = np.floor(1+epochs/(2*step_size))
+        x = np.abs(epochs/step_size - 2*cycle + 1)
+        lr = min_lr + (max_lr - min_lr) * np.maximum(0, (1-x))/float(1.2**(cycle-1))
+      return lr
+
+This is illustrated here with the following input:
+plateau_steps = 2, step_size = 10, min_lr = 5e-5, max_lr = 5e-4
+<img src='./cyclic_LR.png'>
+
+##### Learning rate results
+The truth being that the CLR helped out initially to make the model converge faster and identify the range where the LR was most efficient however once I used that information with a fixed LR of 3e-4 I was not able to improve the performance any further using the CLR.
+<table>
+  <tr>
+    <th>Fixed LR of 3e-4</th>
+    <th>Our Variable LR in range 5e-5 to 5e-4</th> 
+  </tr>
+  <tr>
+    <td>0.9882</td>
+    <td>0.9875</td>
+  </tr>
+</table>
+
+#### Optimization algorithms
+Next it is worth looking at how various gradient descent optimization algorithms performs with our model and the given data. Specifically I have compared Adadelta, Adam, RMSProp and SGD. Please note that these results where obtained with 1024x1024 and the data have not been centered or normalized. In Keras this is as easy as just changing the optimizer function we compile our model with:
+
+    sgd = SGD(lr=1e-5, decay=2e-6, momentum=0.9, nesterov=False)
+    model.compile(optimizer=sgd, loss=bce_dice_loss, metrics=['accuracy', dice_coeff])
+or
+
+    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, metrics=['accuracy', dice_coeff])
+...
+
+
+##### Optimizer algorithms results
+Results of running our dataset with 1024x1024 resolution without data being centered or normalized. This data is contained in the 5 notebooks named unet_no_mask_1024_optimizer-XXX:
+
+<table>
+  <tr>
+    <th>Optimizer algorithms</th>
+    <th>Valid Loss</th>
+    <th>Valid Acc.</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>Adam</td>
+    <td>-1.9561</td>
+    <td>0.9958</td>
+    <td>0.9838</td>
+  </tr>
+  <tr>
+    <td>Adadelta</td>
+    <td>-1.9578</td>
+    <td>0.9960</td>
+    <td>0.9841</td>
+  <tr>
+    <td>RMSProp</td>
+    <td>-1.9585</td>
+    <td>0.9960</td>
+    <td>0.9845</td>
+  </tr>
+  <tr>
+    <td>SGD (no Nesterov)</td>
+    <td>-1.9587</td>
+    <td>0.9960</td>
+    <td>0.9845</td>
+  </tr>
+  <tr>
+    <td>SGD (with Nesterov)</td>
+    <td>-1.9589</td>
+    <td>0.9960</td>
+    <td>0.9846</td>
+  </tr>
+</table>
+
+SGD was configured with:
+
+    sgd = SGD(lr=1e-5, decay=2e-6, momentum=0.9, nesterov=True/False)
+
+So it boils down to a choice between RMSProp or SGD.
+
+
+#### Image augmentation
+The dataset used is reasonably limited in size and that leads us naturally into image augmentation in form of translational invariance, zoom, coloration and intensity. Resulting in a larger dataset, more training data, but also allowing the model to generalize better (reducing over-fitting).
+
+Our data augmentation will randomly modify the image at training time in ways that preserve the information in order to artificially generate more data. Example, a dress rotated by 5 degrees is still a dress, so the network should be able to identify that correctly. In our code, we’re using the 3 functions from petrosgk’s Carvana example (<https://github.com/petrosgk/Kaggle-Carvana-Image-Masking-Challenge/blob/master/train.py>) to randomly alter the hue, saturation, and value of the image (HSV color space), and to randomly shift, scale, rotate and flip the image. If we rotate or flip the image, we have to perform the same operation on the mask so that the mask stays aligned with the original image.
+
+This is the augmentation configuration we will use for training. In short we will allow the color (Hue) to vary from (-50, 50) within the whole color wheel of (-180, 180). The Saturation is the amount of gray in the color and we only allow it to change with a few percent. The Value (brightness) is allowed to change with +- 10 percent. Similarly for translation invariance. Here we allow garments to be shifted a few pixels around with a zoom in the range [0.9, 1.1]. On top of this we allow a small rotation of our mannequin and garment of +- 5 degrees. Finally we allow the image to be flipped horizontally in half of the cases.  
+
+    def train_generator(img_fnames, seg_fnames):
+        while True:
+            for start in range(0, len(img_fnames), batch_size):
+                x_batch = []
+                y_batch = []
+                end = min(start + batch_size, len(img_fnames))
+                for index in range(start, end):
+                    img = cv2.imread(img_fnames[index])
+                    img = cv2.resize(img, (input_size, input_size))                
+                    seg = cv2.imread(seg_fnames[index], cv2.IMREAD_GRAYSCALE)
+                    seg = cv2.resize(seg, (input_size, input_size))
+                    img = randomHueSaturationValue(img,
+                                                   hue_shift_limit=(-50, 50),
+                                                   sat_shift_limit=(-5, 5),
+                                                   val_shift_limit=(-15, 15))
+                    img, mask = randomShiftScaleRotate(img, seg,
+                                                       shift_limit=(-0.01, 0.01),
+                                                       scale_limit=(-0.1, 0.1),
+                                                       rotate_limit=(-5, 5))
+                    img, seg = randomHorizontalFlip(img, seg)
+                    seg = np.expand_dims(seg, axis=2)
+                    x_batch.append(img)
+                    y_batch.append(seg)
+                x_batch = np.array(x_batch, np.float32) / 255
+                y_batch = np.array(y_batch, np.float32) / 255
+                yield x_batch, y_batch
+            
+Below the image augmentation configuration we will use for validation. Note there are no data augmentation for validation data, just baseline preprocessing.             
+
+    def valid_generator(img_fnames, seg_fnames):
+        while True:
+            for start in range(0, len(img_fnames), batch_size):
+                x_batch = []
+                y_batch = []
+                end = min(start + batch_size, len(img_fnames))
+                for index in range(start, end):
+                    img = cv2.imread(img_fnames[index])
+                    img = cv2.resize(img, (input_size, input_size))
+                    seg = cv2.imread(seg_fnames[index], cv2.IMREAD_GRAYSCALE)
+                    seg = cv2.resize(seg, (input_size, input_size))
+                    seg = np.expand_dims(seg, axis=2)
+                    x_batch.append(img)
+                    y_batch.append(seg)
+                x_batch = np.array(x_batch, np.float32) / 255
+                y_batch = np.array(y_batch, np.float32) / 255
+                yield x_batch, y_batch
+
+
+
+##### Image augmentation results
+Results of applying image augmentation are listed below and contained in the two notebooks: unet_no_mask_1024_augmentation_with_rotation and unet_no_mask_1024_augmentation_no_rotation. The table illustrates the highest validation Dice scores obtained.
+
+<table>
+  <tr>
+    <th>Baseline (no augmentation)</th>
+    <th>Augmentation (as above)</th>
+    <th>Augmentation (as above but no rotation)</th>
+  </tr>
+  <tr>
+    <td>0.9845</td>
+    <td>0.9729</td>
+    <td>0.9779</td>
+  </tr>
+  </tr>
+</table>
+
+Several more augmentation experiments were performed but none resulted in an accuracy close to the baseline. 
+
+#### Minimizing noisy background (double pass)
+Lastly, looking at the raw imagery from the studios it is clear that there are some noise in the images from turntable, wires, background sheets and walls etc. What if we initially train a model to predict the garment in the original image, that is, calculate the garment mask and then use this garment mask, by dilating it, to cutout a new image with very little noisy background in it. This second stage image then feeds into a second model (same architectural model) but that has been trained on these 'dilated mask' images, illustrated below. Is that going to give us anything extra?
+
+![alt text](double_pass_approach.png "Double pass")
+
+The first step is to generate a new dataset where the majority of the background has been removed. This functionality is contained in the remove_background.py file. From the file we use this function to generate the second image show above:
+
+    def focus_garment_image(orig_img, mask_img):
+        """
+            Minimises the effect of noisy background from the original garment image by 
+            first expanding (dilating) the garment mask with 50 pixels in all directions 
+            and considering everything outside that mask background that can be ignored.
+            Returns image showing original image within dilated mask
+        """            
+        if (mask_img.shape[2] > 1): #if colour turn to gray
+            mask_img = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
+        
+        # Set threshold for what is garment and wheat is background
+        ret, thresh = cv2.threshold(mask_img, 128, 255, cv2.THRESH_BINARY) 
+        image, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        mask_img = cv2.drawContours(mask_img, contours, -1, (255, 255, 255), 50)            
+        img_no_BG = cv2.bitwise_and(orig_img, orig_img, mask=mask_img)        
+        
+        return img_no_BG
+
+Next step is to train our already introduced final model on this dataset and save the weights file separately.
+
+Finally we create a double pass predictor. That is, we run the image through our already heavily discussed single pass model and obtains the initial mask. Next the initial masks serves to removed majority of the background before feeding this resulting image into the newly trained dilated mask model.
+
+The predictor is clearly described here predict_double_pass.py. 
+
+#### Minimizing noisy background results
+Results of training the model on the less noisy images are listed below and contained in the notebook: unet_with_mask_1024.ipynb. The table illustrates the highest validation Dice scores obtained.
+
+<table>
+  <tr>
+    <th>Valid Loss</th>
+    <th>Valid Accuracy</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>-1.9893</td>
+    <td>0.9977 </td>
+    <td>0.9956</td>
+  </tr>
+  </tr>
+</table>
+
+Several more augmentation experiments were performed but none resulted in an better accuracy. 
+
+Now with the two different weight files in hand we are ready to execute the double pass predictor against any imagery and detect the difference. Below table summaries the result against 5 unseen image, unseen by both networks.
+
+Test garment images here:
+![alt text](5_dilated_test_garments.png "Double pass test garments")
+
+Table with results here from running function show_metrics_for_masks in predict_double_pass.py. The Dice scores where optimized by adjusting threshold values to 0.67 and 0.40 for Single and Double pass, respectively. And to clarify anything above those thresholds are classified as garment and below is background. Further discussion of thresholds in result section. 
+![alt text](5_dilated_test_garments_scores.png)
 
 
 ## IV. Results
-_(approx. 2-3 pages)_
+First a quick summary of our results so far before revealing the final score by running the predictor against new unseen test data. 
+
+### Result Summary and Discussion
+
+#### Models
+We introduced three different models and more or less straight out of the box we achieved the following scores for scaled down imagery of resolution 256x256:
+<table id="t01">
+  <tr>
+    <th>Model</th>
+    <th>Train Loss</th>
+    <th>Train Acc.</th> 
+    <th>Train Dice</th>
+    <th>Valid Loss</th>
+    <th>Valid Acc.</th>
+    <th>Valid Dice</th>
+  </tr>
+  <tr>
+    <td>Simplest U-Net</td>
+    <td>-1.4932</td>
+    <td>0.9693</td> 
+    <td>0.7761</td>
+    <td>-1.4023</td>
+    <td>0.9611</td>
+    <td>0.7373</td>
+  </tr>
+  <tr>
+    <td>Basic U-Net</td>
+    <td>-1.9826</td>
+    <td>0.9976</td> 
+    <td>0.9924</td>
+    <td>-1.9586</td>
+    <td>0.9960</td>
+    <td>0.9826</td>
+  </tr>  
+  <tr>
+    <td>Final U-Net</td>
+    <td>-1.9872</td>
+    <td>0.9978</td> 
+    <td>0.9945</td>
+    <td>-1.9706</td>
+    <td>0.9967</td>
+    <td>0.9882</td>
+  </tr>  
+</table>
+
+Note: above scores does include centering and normalizing of the data.
+
+<BR>
+
+#### Preprocessing
+
+A lot of effort was put into preprocessing in order to further improve our score. We conclude that:
+
+- Color images performs better than gray - full stop!
+- Applying image interpolation algorithms for upsizing and downsizing images is a must, gives around 0.1 - 0.2 of a percent (Dice score)
+- Centering and normalizing the dataset is a must, gives around 0.05 of a percent (Dice score)
+- Contrast enhancing techniques in form of histogram equalization and contrast stretching did show promise but ultimately did not benefit our data enough to justify adding that amount of complexity to the solution.
+<BR>
+
+#### Training parameters
+
+In terms of training parameters we made the following observations: 
+- A cyclic declining learning rate helps us achieve good convergence and understand the range in which it works well and its sensitivity
+- A fixed learning rate of 3e-4 turned out to produce the best result however the model showed little sensitivity in the range 1e-3 to 1e-6
+- The best optimization algorithms for our imagery and model turned out to be down to two choices: RMSProp or SGD
+<BR>
+
+####  Image augmentation
+Regarding image augmentation (invariance, zoom, coloration and intensity). The results turned out disappointing. Introducing translational and rotational invariance plus coloration etc. lowered the Dice with almost 1.2 percent. Afterwards removing rotational invariance increased the Dice with 0.5 percent (still down with 0.7 percent). 
+On reflection we own and operate these professional photo studios and we can control distance (zoom), alignment (invariance) and in fact we are doing everything to be consistent so adding variation here is most likely not the right thing to do. I believe image augmentation can be beneficial but only by using horizontal flip + coloration and smaller variations on the intensity.
+<BR>
+
+#### Focus image, remove background
+Finally minimizing noisy background. The result are disappointing I had expected a decent improvement however it is a mixed bag. Some garments perform better with the simple 'Single Pass' approach and other slightly better with the 'Double Pass' approach. The good thing is that it leaves us 
+with something to try and understand. Speaking of understanding, when using the ground truth masks to reduce background and train the model using these images we managed a validation Dice of 0.9956!!! Yet if we take a high Dice mask from a 'Single Pass' and create the focused garment image using a 50 pixel wide brush we don't get anywhere close to such a Dice Score. What needs to be investigated further are the differences between focused garment images resulting from ground truth masks and good 'Single Pass' masks.
+
+
+### Final Result (Single Pass)
+Finally the final score by running the predictor (Single Pass) against new, unseen by any model, test dataset. This dataset contains 450 images, 150 garments in our usual 3 viewpoints. 
+
+<table>
+  <tr>
+    <th>Resolution</th>
+    <th>Valid Accuracy</th>
+    <th>Valid Mean Dice</th>
+    <th>Test Mean Dice</th>
+    <th>Test Median Dice</th>
+  </tr>
+  <tr>
+    <td>256 (1)</td>
+    <td>0.9930</td>
+    <td>0.9845</td> 
+    <td>0.9840</td>
+    <td>0.9889</td>
+  </tr>
+  <tr>
+    <td>256 (2)</td>
+    <td>0.9967</td>
+    <td>0.9882</td> 
+    <td>0.9852</td>
+    <td>0.9885</td>
+  </tr>
+  <tr>
+    <td>1024 (3)</td>
+    <td>0.9960</td>
+    <td>0.9845</td> 
+    <td>0.9884</td>
+    <td>0.9909</td>
+  </tr>  
+  <tr>
+    <td>1024 (4)</td>
+    <td>0.9967</td>
+    <td>0.9895</td> 
+    <td>0.9900</td>
+    <td>0.9920</td>
+  </tr>  
+</table>
+
+(1) not centered and normalized (preprocessing/unet_no_mask_256_preprocessing_resize_optimized_color.ipynb)<BR> 
+(2) not resize optimized (preprocessing/unet_no_mask_256_preprocessing_centeret_normalized_color.ipynb)<BR>
+(3) not centered and normalized; not resize optimized (optimizer/unet_no_mask_1024_optimizer-RMSProp.ipynb)<BR>
+(4) completely optimized (unet_no_mask_1024_meanstd_resize_optimized.ipynb)<BR>
+
+So our final 1024x1024 that is resize optimized and centered plus normalized are
+a clear winner. The distribution of scores are going to be left-skewed due to 
+bad contrast in a few images and due to poor ground truth masks. It is not 
+fair that a few bad samples jeopardizes the feasibility of determining how doable
+is automation. With that in mind we should consider the Median score rather than 
+the Mean score. Below illustration shows how removing outliers affects the 
+end result.    
+
+![alt text](final_result_and_outliers.png)
+
+
+<H4>End result is a Dice score of 0.9922</H4>
+
+Note: when the imagery has higher resolution than the max. resolution we can handle on a state-of-the-art GPU the training resolution has a big impact. This is clearly illustrated when comparing row 2 and 3 above. The validation Dice is almost 0.4% higher on the 256 model compared to the 1024 model however when we scale up to original size of 1152x1728 the 1024 model performs 0.3% better. It is also worth here mentioning that the U-Net model is actually resolution agnostic but due to GPU constraints, primarily compute time feedback and RAM constraints we are working with smaller resolutions such as 256x256 and 1024x1024.
+
 
 ### Model Evaluation and Validation
-In this section, the final model and any supporting qualities should be evaluated in detail. It should be clear how the final model was derived and why this model was chosen. In addition, some type of analysis should be used to validate the robustness of this model and its solution, such as manipulating the input data or environment to see how the model’s solution is affected (this is called sensitivity analysis). Questions to ask yourself when writing this section:
-- _Is the final model reasonable and aligning with solution expectations? Are the final parameters of the model appropriate?_
-- _Has the final model been tested with various inputs to evaluate whether the model generalizes well to unseen data?_
-- _Is the model robust enough for the problem? Do small perturbations (changes) in training data or the input space greatly affect the results?_
-- _Can results found from the model be trusted?_
+
+The end result is reasonable and aligned with what has come out of the R&D team and likewise with the 'Carvana Image Masking Challenge' at Kaggle. In that regard it is actually a great result.
+
+Now in terms of input the model has repeatedly proven itself consistent and reliable. First it was trained on only front facing garments and managed a average Dice in the late 98. Next it was introduce to two new viewpoints, front right and back, both has new patterns, and it still managed to learn and resulted in a mean score in the late 98. Additionally both the validation Dice and the Predictor Dice on different datasets are only separated by 0.05 percent.
+
+Interesting enough 4 of our training/validation images where not mannequins but real people, see below, and in fact the model performed just as well as on a mannequin with a Dice well beyond 99% (images shown may have been part of training data - argument still stands). 
+
+![alt text](humans_not_mannequins.png)
+
+#### What does good look like
+Next some of the performers using our final model:
+<table>
+  <tr>
+    <th>Garment</th>
+    <th>Test Mean Dice</th>
+    <th>Garment</th>
+    <th>Ground Truth</th>
+    <th>Predicted</th>
+  </tr>
+  <tr>
+    <td>2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb</td>
+    <td>0.9978</td>
+    <td><img src="../input_CP/fold_1_unseen/original\2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\masks/2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\predicted/2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb_Back.png" alt="" border=3 height=100 width=100></img></td> 
+  </tr>
+  <tr>
+    <td>3c03312b-de62-48d9-ba38-8fae256ef290</td>
+    <td>0.9972</td>
+    <td><img src="../input_CP/fold_1_unseen/original\3c03312b-de62-48d9-ba38-8fae256ef290_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\masks/3c03312b-de62-48d9-ba38-8fae256ef290_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\predicted/3c03312b-de62-48d9-ba38-8fae256ef290_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+  </tr>
+  </tr>  
+    <tr>
+    <td>1f2d16e6-ad80-46e8-ab26-969eb634c354</td>
+    <td>0.9969</td>
+    <td><img src="../input_CP/fold_1_unseen/original\03da41b7-4d9b-4040-805d-544b07db756b_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\masks/03da41b7-4d9b-4040-805d-544b07db756b_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src="./final_model_results\predicted/03da41b7-4d9b-4040-805d-544b07db756b_Back.png" alt="" border=3 height=100 width=100></img></td> 
+  </tr>  
+</table>
+
+Below I have overlaid the the original image with the predicted mask (in green) to make 
+it easier to visualize the quality of the predicted masks (images here: <root>\results\final_model_results\overlays):
+
+
+<table>
+  <tr>
+    <th>Original Garment</th>
+    <th>Overlay of predicted on Original</th>
+  </tr>
+  <tr>
+    <td><img src=".\final_model_results\original\2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\final_model_results\overlays\2ae9fd42-f8db-43d9-b9c9-c9ba24127fcb_Back.png" alt="" border=3 height=650 width=650></img></td> 
+  </tr>
+  <tr>
+    <td><img src=".\final_model_results\original\3c03312b-de62-48d9-ba38-8fae256ef290_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\final_model_results\overlays\3c03312b-de62-48d9-ba38-8fae256ef290_FrontRight.png" alt="" border=3 height=650 width=650></img></td> 
+  </tr>
+  <tr>
+    <td><img src=".\final_model_results\original\03da41b7-4d9b-4040-805d-544b07db756b_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\final_model_results\overlays\03da41b7-4d9b-4040-805d-544b07db756b_Back.png" alt="" border=3 height=650 width=650></img></td> 
+  </tr>  
+</table>
+
+Generally very impressive, that said, each garment has some small issues: 
+* For the short skirts the results are impressive however the predictor does not 
+capture the little V-shape zip properly. 
+* For the long skirt the  predictor are doing great again and doing really well 
+on both round and sharp corners. Two small issues here. The predictor are missing 
+out the top pixels around the waistline. Also it has determined that a small part of 
+the mannequins left shin are garment (right in picture).
+* For the long dress again a nice result, matches the garment shape brilliantly but again we have issues at the top and bottom of 
+the garment. At the top, the arms and neck are not sharp enough, not well enough defined. At the bottom of the dress 
+it is slightly off in terms of edge detection. If the dress didn't have horizontal stripes it would 
+properly not even be a problem.
+
+
+
+#### What does bad look like
+In the 'Final Result (Single Pass)' section I argue that we should use the median score
+and we should remove outliers. During that exercise we identified 16 outliers to remove.
+In this section we examine the outliers to understand when the model is not doing well. 
+Next a table showing the Dice score (low to high) as well as the ground truth and 
+predicted masks:
+
+<table>
+  <tr>
+    <th>#</th>
+    <th>Original Garment</th>
+    <th>Ground-truth mask</th>
+    <th>Predicted mask</th>
+  </tr>
+  <tr>
+    <td>1</td>
+    <td>Dice = 0.9165<img src=".\outliers\original\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>Dice = 0.9368<img src=".\outliers\original\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>3</td>
+    <td>Dice = 0.9404<img src=".\outliers\original\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>4</td>
+    <td>Dice = 0.9645<img src=".\outliers\original\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>5</td>
+    <td>Dice = 0.9648<img src=".\outliers\original\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>6</td>
+    <td>Dice = 0.9674<img src=".\outliers\original\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>7</td>
+    <td>Dice = 0.9676<img src=".\outliers\original\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>8</td>
+    <td>Dice = 0.9680<img src=".\outliers\original\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>9</td>
+    <td>Dice = 0.9690<img src=".\outliers\original\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>10</td>
+    <td>Dice = 0.9720<img src=".\outliers\original\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>11</td>
+    <td>Dice = 0.9726<img src=".\outliers\original\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>12</td>
+    <td>Dice = 0.9728<img src=".\outliers\original\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+  <tr>
+    <td>13</td>
+    <td>Dice = 0.9737<img src=".\outliers\original\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td><img src=".\outliers\masks\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=200 width=200></img></td> 
+    <td><img src=".\outliers\predicted_masks\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=200 width=200></img></td> 
+  </tr>
+</table>
+
+Our observations regarding the outliers are summarized below:
+
+
+<table>
+  <tr>
+    <th>#</th>
+    <th>Issue Description</th>
+  </tr>
+  <tr>
+    <td>1</td>
+    <td>- Bad ground truth cutout under the arms, too thin, 
+    predicted mask better <BR>
+    - Complicated closing of west not understood by ML model, 
+    too little training data of that kind and/or too complicated
+    for current model</td> 
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>- Bad ground truth cutout as dip hem missing<BR>
+    - Complicated clothing not understood well by ML model, 
+    too little training data of that kind and/or too complicated
+    for current model</td> 
+  </tr>
+  <tr>
+    <td>3</td>
+    <td>TODO
+    - Bad ground truth cutout as dip hem missing<BR>
+    - Complicated clothing not understood well by ML model, 
+    too little training data of that kind and/or too complicated
+    for current model</td> 
+  </tr>
+</table>
 
 ### Justification
-In this section, your model’s final solution and its results should be compared to the benchmark you established earlier in the project using some type of statistical analysis. You should also justify whether these results and the solution are significant enough to have solved the problem posed in the project. Questions to ask yourself when writing this section:
-- _Are the final results found stronger than the benchmark result reported earlier?_
-- _Have you thoroughly analyzed and discussed the final solution?_
-- _Is the final solution significant enough to have solved the problem?_
+
+The hope and aim was to obtain a Dice score > 98.32% and close to 99.7%. Where the first score comes from our (Metail) R&D team which used similar imagery and a DeepLab-LargeFOV upsample model and the later score was the winning score of the 'Carvana Image Masking Challenge'. <BR>
+With a Dice score of 99.22% the technical ability of the model can be considered accomplished.
+
+However the Dice score is just a number, an important metric for comparison, but is it practical to automate cutouts with a average Dice score around 99.22%?
+
 
 
 ## V. Conclusion
