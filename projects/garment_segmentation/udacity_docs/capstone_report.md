@@ -7,10 +7,10 @@ April 7th, 2018
 
 ### Project Overview
 
-The motivation for this project is rooted in my current work at Metail.com where we provide smart technology for fashion imagery. Meaning, shoot images without the need to hire models, photographers, or hair and make up artists.
+The motivation for this project is rooted in my current work at Metail.com where we provide smart technology for fashion imagery. Meaning, shoot images without the need to hire models, photographers or hair and make up artists.
 
 #### How it works:
-A garment collection is styled and shot on mannequins, then our technology dresses the model (pre-shoot), of the customers choice, in the clothing as if he/she was photographed wearing it.
+A garment collection is styled and shoot on mannequins, then our technology dresses the model (pre-shoot), of the customers choice, in the clothing as if he/she was photographed wearing it.
 
 Actually our models and garments will be shoot at different viewpoints using our own custom rotating photo studio, that automatically captures and processes 3 standard images of each garment (and model). Namely Front, Front-Right and Back. 
 Image viewpoints: 
@@ -45,6 +45,7 @@ The dataset being used is generated from our past experience of digitizing rough
 To generate a garment cutout mask that can overlay the original mannequin dressed image thereby allowing an easy way to cutout the garment, see illustration below.
 
 How it works: 
+
 ![alt text](how_it_works.png "How it works")
 
 
@@ -53,7 +54,7 @@ In order to measure the performance and success of the neural work I will use th
 #### The Approach
 As a solution to our problem we will develop a deep neural network capable of predicting if a given pixel is background or garment. In a nutshell it is a binary classification problem per pixel. Tasks to perform:
 * The data (images) are well understood and coming from our own controlled environment. So all that needs doing is to generate the required tensors for training and validating the imagery with a little preprocessing.
-* Next we will build a simple model in Keras to run the training data against. Based on the lessons learned from the model we will we will move onto a U-net implementation. Initially keeping it small, 128x128 model, before moving to higher resolution like 1024x1024 model.
+* Next we will build a simple model in Keras to run the training data against. Based on the lessons learned from the model we will we will move onto a U-net implementation. Initially keeping it small, 256x256 model, before moving to higher resolution like 1024x1024 model.
 * With the U-net model in place the next phase is to evaluate on how:
   * Learning rate affects results, while having a look at cyclical learning rates
   * Optimization algorithms (Adam, RMSProp..) affects results
@@ -73,7 +74,8 @@ where |X| and |Y| are the numbers of elements in the two samples. The Dice coeff
 
 I will compile the Keras model to use the following metrics: 'dice coefficient' & 'accuracy' and likewise the loss function will also have the Dice coefficient built into it together with categorical cross-entropy.
 
-    Loss function = weightBCE * binaryCrossEntropy(y_true, y_pred) - weightDice * diceCoeff(y_true, y_pred)
+    Loss function = weightBCE * binaryCrossEntropy(y_true, y_pred) -
+                    weightDice * diceCoeff(y_true, y_pred)
 
 
 #### Benchmark Models
@@ -98,11 +100,10 @@ The segmentation dataset used here consists of 1084 raw garment images and an eq
 
 The cutouts are created by our Indian team using Photoshop on the images shoot on the dressed mannequin. These cutouts are our ground truth and illustrated here:
 
-Image cutouts: 
 ![alt text](image_viewpoints_cutouts.png "Photoshop cutouts")
+
 However we will only use the cutouts indirectly as we won't train and validate against the cutout itself but rather against the alpha-mask contained in the cutout image:
 
-Alpha cutout masks: 
 ![alt text](image_viewpoints_masks.png "Cutout masks")
 
 Summary of image data:
@@ -130,7 +131,7 @@ Summary of image data:
 
 Our segmentation data available originates from a different product called the ME model experience. Unfortunately one of the problems with this data is, it currently can't handle showing the inside back-layer of a garment if visible. As a result cutouts don't show the inside back-layer at all as illustrated here:
 
-Inaccurate cutout: 
+Inaccurate cutouts: 
 ![alt text](inaccurate_cutouts.png "Inaccurate cutouts")
 
 Yes, earlier images of the first dress has been manually modified to contain the back-layer for the cutout and the mask. In reality the inside back-layers are not present in cutouts or masks. This will be a challenge for not least dip hem dresses (longer at the back than the front). The impact will be a slight reduction of the accuracy we can expect for the dataset.
@@ -170,7 +171,7 @@ The dataset used is reasonably limited in size and that leads us naturally into 
 
 Lastly, looking at the raw imagery from the studios it is clear that there are some noise in the images from turntable, wires, background sheets and walls etc. What if we initially train a model to predict the garment in the original image, that is, calculate the garment mask and then use this garment mask, by dilating it, to cutout a new image with very little noisy background in it. This second stage image then feeds into a second model (same architectural model) but that has been trained on these 'dilated mask' images, illustrated below. Is that going to give us anything extra?
 
-![alt text](double_pass_approach.png "Double pass")
+![alt text](double_pass_approach_V1.png "Double pass")
 
 During training, both the training and the validation sets are loaded into the RAM. After that a few images are selected to be loaded into the GPU memory for processing at a time, our batch-size. Due to K80 GPU memory limitations of 12 GB RAM we can only get away with a small batch size when running with higher resolution images like 1024x1024 and a decent model. The training is done using various optimization algorithms, learning rates and slight variations in the neural network architecture. In contrast to this, inference is done using only the CPU.
 
@@ -203,7 +204,7 @@ The U-Net paper (https://arxiv.org/abs/1505.04597) present itself as a way to do
 A U-Net is like a convolutional autoencoder, but it also has skip-like connections with the feature maps located before the bottleneck layer, in such a way that in the decoder part some information comes from previous layers, bypassing the compressive bottleneck.
 
 The figure below, taken from the official paper of the U-Net, illustrates why it is called a U-Net model:
-<img src='./u-net_cnn.png'>
+<img src='./u-net_cnn_V1.png'>
 
 Thus, in the decoder, data is not only recovered from a compression, but is also concatenated with the information’s state before it is passed into the compression bottleneck so as to augment context for the next decoding layers to come. That way, the neural networks still learns to generalize in the compressed latent representation (located at the bottom of the “U” shape in the figure), but also recovers its latent generalizations to a spatial representation with the proper per-pixel semantic alignment in the right part of the U of the U-Net.
 
@@ -241,6 +242,7 @@ The implementation is done in a separate implementation notebook, find it here u
 The model is visualized here and the code demonstrated below.
 <img src='./U-Net_model_small.png'>
 
+
     def simple_unet_256_segmentation_model(input_shape=(256, 256, 3), num_classes=1):
         inputs = Input(shape=input_shape) # 256
     
@@ -277,10 +279,13 @@ As we are aiming for a perfect overlap, dice coefficient of 1, why not build it 
         y_true_f = K.flatten(y_true)
         y_pred_f = K.flatten(y_pred)
         intersection = K.sum(y_true_f * y_pred_f)
-        return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+        return (2. * intersection + smooth) / (K.sum(y_true_f) + 
+                K.sum(y_pred_f) + smooth)
+    
     
     def bce_dice_loss(y_true, y_pred):
-        loss = 0.5 * binary_crossentropy(y_true, y_pred) - 2*dice_coeff(y_true, y_pred)
+        loss = 0.5 * binary_crossentropy(y_true, y_pred) - 
+                2*dice_coeff(y_true, y_pred)
         return loss
 
 
@@ -288,7 +293,8 @@ As we are aiming for a perfect overlap, dice coefficient of 1, why not build it 
 Next we ask the model to use RMSprop as optimizer with fixed learning rate of 3e-4. We tell the model to use our own loss function we just discussed and finally we select the metrics to use as the Dice coefficient along with pixel accuracy.
 
 
-    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, metrics=[dice_coeff, 'accuracy'])
+    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, 
+                  metrics=[dice_coeff, 'accuracy'])
 
 
 #### Training our model
@@ -298,21 +304,25 @@ Finally we are ready to train out simple model. We train it my calling the fit m
 * ModelCheckpoint to save the weights that brought about an improvement in our metric, here validation loss
 * TensorBoard to safe a log that can subsequently be analyzed for metric improvements against epochs etc
 
-      callbacks = [EarlyStopping(monitor='val_loss', patience=20, verbose=2, min_delta=1e-4),
-                   ModelCheckpoint(monitor='val_loss', filepath='./weights/' + str(weight_file_name) + '.hdf5', 
-                                   save_best_only=True, save_weights_only=True),
-                  TensorBoard(log_dir='./logs')]
+      callbacks = [EarlyStopping(monitor='val_loss', patience=20, verbose=2, 
+                                  min_delta=1e-4),
+                   ModelCheckpoint(monitor='val_loss', filepath='./weights/ +
+                                    str(weight_file_name) + '.hdf5',
+                                    save_best_only=True, save_weights_only=True),
+                   TensorBoard(log_dir='./logs')]
       
       
-      history = model.fit(orig_train_tensors, seg_train_tensors, batch_size=batch_size, epochs=epochs, verbose=1, 
-                validation_data=(orig_valid_tensors, seg_valid_tensors), callbacks=callbacks)
+      history = model.fit(orig_train_tensors, seg_train_tensors, batch_size=batch_size, 
+                          epochs=epochs, verbose=1, 
+                          validation_data=(orig_valid_tensors, seg_valid_tensors), 
+                          callbacks=callbacks)
 
 
 
 #### Result
 This model works however it is not sufficiently complex that it can capture all the features in the garments. The performance of this model is illustrated in below table and figures showing various metrics plotted against epochs. Further discussion of results are postponed to the **Final Results** section.
 
-<img src='./simple_model_graphs.png'>
+<img src='./simple_model_graphs_V1.png'>
 
 <table id="t01">
   <tr>
@@ -333,7 +343,7 @@ This model works however it is not sufficiently complex that it can capture all 
   </tr>
 </table>
 
-Note: arrows indicates that the model starts overfitting in terms of constantly improving on the training data but can't generalise to validation data.   
+Note: arrows indicates that the model starts overfitting in terms of constantly improving on the training data but can't generalize to validation data.   
 
 The simple model was not sufficiently complex that it could capture all the features in the garments. So to that effect we introduce the basic U-Net model.
 
@@ -359,7 +369,7 @@ All of this resulting in 61,963,281 trainable parameters - we have entropic capa
 #### Result
 This model works really well. The performance of this model is illustrated below. Further discussion of results are postponed to the **Final Results** section.
 
-<img src='./basic_model_graphs.png'>
+<img src='./basic_model_graphs_V1.png'>
 
 <table id="t01">
   <tr>
@@ -406,7 +416,7 @@ This model is very similar to our basic model. There are no new features we have
 #### Result
 This model works really really well. The performance of this model is illustrated below. Further discussion of results are postponed to the **Final Results** section.
 
-<img src='./final_model_graphs.png'>
+<img src='./final_model_graphs_V1.png'>
 
 <table>
   <tr>
@@ -544,7 +554,7 @@ The following results are based on our 1084 samples trained at a resolution of 2
 
 First observation from this test clearly shows that for best performance color is the way to go. The more information contained in the 3 color channels is being used and as a result the model performs much better that just 1 gray channel, roughly 3 to 4 tens of a percent better.
 
-Second observation when resizing imagery always apply apropriate interpolation-algorithms:
+Second observation, when resizing imagery always apply apropriate interpolation-algorithms:
 - Downsize: cv2.resize(img, (input_size, input_size), interpolation=cv2.INTER_AREA)
 - Upsize: cv2.resize(img, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
 
@@ -560,11 +570,12 @@ So far we have used a fixed learning rate of 3e-4. The truth is that this value 
 
     def plateau_then_decl_triangular_lr(epochs):    
         """
-            Given the inputs, calculates the lr that should be applicable for this epoch.
-            The algo will start out with a LR equal to the average of the min and max rates
-            for the first no. of plateau_steps. Hereafter the algo will start oscillating 
-            with a wave length at 2 x step_size and an ever declining amplitude (the minimal
-            LR is unaffected however the max LR will keep declining in an power based fashion) 
+            Given the inputs, calculates the lr that should be applicable for this epoch. 
+            The algo will start out with a LR equal to the average of the min and max 
+            rates for the first no. of plateau_steps. Hereafter the algo will start 
+            oscillating with a wave length at 2 x step_size and an ever declining 
+            amplitude (the minimal LR is unaffected however the max LR will keep 
+            declining in an power based fashion) 
         """
         
         if epochs < plateau_steps:
@@ -573,10 +584,11 @@ So far we have used a fixed learning rate of 3e-4. The truth is that this value 
         cycle = np.floor(1+epochs/(2*step_size))
         x = np.abs(epochs/step_size - 2*cycle + 1)
         lr = min_lr + (max_lr - min_lr) * np.maximum(0, (1-x))/float(1.2**(cycle-1))
-      return lr
+        return lr
 
-This is illustrated here with the following input:
+Illustrated here with the following input:
 plateau_steps = 2, step_size = 10, min_lr = 5e-5, max_lr = 5e-4
+
 <img src='./cyclic_LR.png'>
 
 #### Learning rate results
@@ -599,7 +611,8 @@ Next we look at how various gradient descent optimization algorithms performs wi
     model.compile(optimizer=sgd, loss=bce_dice_loss, metrics=['accuracy', dice_coeff])
 or
 
-    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, metrics=['accuracy', dice_coeff])
+    model.compile(optimizer=RMSprop(lr=0.0003), loss=bce_dice_loss, 
+                  metrics=['accuracy', dice_coeff])
 
 
 #### Optimizer algorithms results
@@ -725,9 +738,9 @@ Results of applying image augmentation are listed below and contained in the two
 Several more augmentation experiments were performed but none resulted in an accuracy close to the baseline. 
 
 #### Minimizing noisy background (double pass)
-Lastly, looking at the raw imagery from the studios it is clear that there are some noise in the images from turntable, wires, background sheets and walls etc. What if we initially train a model to predict the garment in the original image, that is, calculate the garment mask and then use this garment mask, by dilating it, to cutout a new image with very little noisy background in it. This second stage image then feeds into a second model (same architectural model) but one that has been trained on these 'dilated mask' images, illustrated below.
+Looking at the raw imagery from the studios it is clear that there are some noise in the images from turntable, wires, background sheets and walls etc. What if we initially train a model to predict the garment in the original image, that is, calculate the garment mask and then use this garment mask, by dilating it, to cutout a new image with very little noisy background in it. This second stage image then feeds into a second model (same architectural model) but one that has been trained on these 'dilated mask' images, illustrated below.
 
-![alt text](double_pass_approach.png "Double pass")
+![alt text](double_pass_approach_V1.png "Double pass")
 
 The first step is to generate a new dataset where the majority of the background has been removed. This functionality is contained in the util/remove_background.py file. From the file we use this function to generate the second image show above:
 
@@ -735,7 +748,7 @@ The first step is to generate a new dataset where the majority of the background
         """
             Minimises the effect of noisy background from the original garment image by 
             first expanding (dilating) the garment mask with 50 pixels in all directions 
-            and considering everything outside that mask background that can be ignored.
+            and considering everything outside that mask as background that can be ignored.
             Returns image showing original image within dilated mask
         """            
         if (mask_img.shape[2] > 1): #if colour turn to gray
@@ -743,7 +756,8 @@ The first step is to generate a new dataset where the majority of the background
         
         # Set threshold for what is garment and what is background
         ret, thresh = cv2.threshold(mask_img, 128, 255, cv2.THRESH_BINARY) 
-        image, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        image, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, 
+                                                      cv2.CHAIN_APPROX_NONE)
         mask_img = cv2.drawContours(mask_img, contours, -1, (255, 255, 255), 50)            
         img_no_BG = cv2.bitwise_and(orig_img, orig_img, mask=mask_img)        
         
@@ -756,7 +770,7 @@ Finally we create a double pass predictor. That is, we run the image through our
 The predictor is clearly described here predict_double_pass.py. 
 
 #### Minimizing noisy background results
-Results of training the model on the less noisy images are listed below and available here: notebooks/minimize_background/unet_with_mask_1024.ipynb. Below table illustrates the highest validation Dice scores obtained. Please note that listed scores are by using the ground truth masks to eliminate background noise (first pass) not a inferred mask.
+Results of training the model on the less noisy images are listed below and available here: notebooks/minimize_background/unet_with_mask_1024.ipynb. Below table illustrates the highest validation Dice scores obtained. Please note that listed scores are by using the ground truth masks to eliminate background noise (first pass) not an inferred mask.
 
 <table>
   <tr>
@@ -772,14 +786,15 @@ Results of training the model on the less noisy images are listed below and avai
   </tr>
 </table>
 
-Several more augmentation experiments were performed but none resulted in an better accuracy. 
+Several more augmentation experiments were performed but none resulted in a better accuracy. 
 
 Now with the two different weight files in hand we are ready to execute the double pass predictor against any imagery and detect the difference. Below table summaries the result against 5 unseen image, unseen by both networks.
 
-Test garment images here:
+Test garment images:
 ![alt text](5_dilated_test_garments.png "Double pass test garments")
 
 Results comes from running function show_metrics_for_masks in predict_double_pass.py. The Dice scores where optimized by adjusting threshold values to 0.67 and 0.40 for Single and Double pass, respectively. Anything above those thresholds are classified as garment and below is background. Further discussion of thresholds in result section. 
+
 ![alt text](5_dilated_test_garments_scores.png)
 
 
@@ -841,7 +856,7 @@ A lot of effort was put into preprocessing in order to further improve our score
 - Applying image interpolation algorithms for upsizing and downsizing images is a must, gives around 0.1 - 0.2 of a percent (Dice score)
 - Centering and normalizing the dataset is a must, gives around 0.05 of a percent (Dice score)
 - Contrast enhancing techniques in form of histogram equalization and contrast stretching did show promise but ultimately did not benefit our data enough to justify adding that amount of complexity to the solution.
-<BR>
+
 
 #### Training parameters
 
@@ -850,15 +865,18 @@ In terms of training parameters we made the following observations:
 - A fixed learning rate of 3e-4 turned out to produce the best result however the model showed little sensitivity in the range 1e-3 to 1e-6
 - The best optimization algorithms for our imagery and model turned out to be down to two choices: RMSProp or SGD. It turns out that RMSProp handles sharper corners better than SGD which becomes slightly more blurred.
 
+
 ####  Image augmentation
 Regarding image augmentation (invariance, zoom, coloration and intensity). The results turned out disappointing. Introducing translational and rotational invariance plus coloration etc. lowered the Dice with almost 1.2 percent. Afterwards removing rotational invariance increased the Dice with 0.5 percent (still down with 0.7 percent). 
 On reflection we own and operate these professional photo studios and we can control distance (zoom), alignment (invariance) and in fact we are doing everything to be consistent so adding variation here is most likely not the right thing to do. I believe image augmentation can be beneficial but only by using horizontal flip + coloration and smaller variations on the intensity.
-<BR>
+
 
 #### Focus image, remove background (Double Pass)
 Finally minimizing noisy background. The result are disappointing I had expected a decent improvement however it is a mixed bag. Some garments perform better with the simple 'Single Pass' approach and other slightly better with the 'Double Pass' approach. The good thing is that it leaves us 
 with something to try and understand. Speaking of understanding, when using the ground truth masks to reduce background and train the model using these images we managed a validation Dice of 0.9956!!! Yet, if we take a well performing Dice mask from a 'Single Pass' and create the focused garment image using a 50 pixel wide brush we don't get anywhere close to such a Dice Score. What needs to be investigated further are the differences between focused garment images resulting from ground truth masks and good 'Single Pass' masks.
 
+<BR>
+<BR>
 
 ### Final Result (Single Pass)
 Finally the final score by running the predictor (Single Pass) against new, unseen by any model, test dataset. This dataset contains 450 images, 150 garments in our usual 3 viewpoints. 
@@ -903,7 +921,7 @@ Finally the final score by running the predictor (Single Pass) against new, unse
 
 (1) resize optimized but not centered and normalized (preprocessing/unet_no_mask_256_preprocessing_resize_optimized_color.ipynb)<BR> 
 (2) centered and normalized but not resize optimized (preprocessing/unet_no_mask_256_preprocessing_centeret_normalized_color.ipynb)<BR>
-(3) not centered and normalized; not resize optimized (optimizer/unet_no_mask_1024_optimizer-RMSProp.ipynb)<BR>
+(3) not centered and normalized; not resize optimized   (optimizer/unet_no_mask_1024_optimizer-RMSProp.ipynb)<BR>
 (4) completely optimized (final_unet_no_mask_1024_meanstd_resize_optimized.ipynb)<BR>
 
 So our final 1024x1024 that is resize optimized and centered plus normalized are a clear winner. 
@@ -912,7 +930,7 @@ Additionally the distribution of scores are going to be left-skewed due to bad c
 
 Below illustration shows the distribution of scores and how removing outliers affects the end result.    
 
-![alt text](final_result_and_outliers.png)
+![alt text](final_result_and_outliers_V1.png)
 
 
 <H4>End result is a Dice score of 0.9922</H4>
@@ -931,7 +949,7 @@ Interesting enough 4 of our training/validation images where not mannequins but 
 ![alt text](humans_not_mannequins.png)
 
 #### What does good look like
-Next some of the high performers using our final model (images here: \results\final_model_results\\:
+Next some of the high performers using our final model (images here: \results\final_model_results\\):
 <table>
   <tr>
     <th>Garment</th>
@@ -998,7 +1016,8 @@ the garment. At the top, the arms and neck are not sharp enough, not well enough
 it is slightly off in terms of edge detection. If the dress didn't have horizontal stripes it would 
 properly not even be a problem.
 
-
+<BR>
+<BR>
 
 #### What does bad look like
 In the 'Final Result (Single Pass)' section I argue that we should use the median score and we should remove outliers. During that exercise we identified 16 outliers (13 garments) to remove.
@@ -1014,79 +1033,92 @@ Next a table showing the Dice score (low to high) as well as the ground truth an
   </tr>
   <tr>
     <td>1</td>
-    <td>Dice = 0.9165<img src=".\outliers\original\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9165 <BR>
+    <img src=".\outliers\original\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\3a4333b1-a907-40bf-9e1e-322b9b4bda99_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>2</td>
-    <td>Dice = 0.9368<img src=".\outliers\original\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9368 <BR>
+    <img src=".\outliers\original\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\1df94ec8-8226-4a9e-ac80-c2ca9e915344_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>3</td>
-    <td>Dice = 0.9404<img src=".\outliers\original\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9404 <BR>
+    <img src=".\outliers\original\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\3e94aa52-dace-4da4-8961-91d35f59fadc_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>4</td>
-    <td>Dice = 0.9645<img src=".\outliers\original\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9645 <BR>
+    <img src=".\outliers\original\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\2d01da92-7121-4c39-a2dd-e61f16a6fb76_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>5</td>
-    <td>Dice = 0.9648<img src=".\outliers\original\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9648 <BR>
+    <img src=".\outliers\original\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\0d602ab8-1188-487d-a25d-0f167123c236_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>6</td>
-    <td>Dice = 0.9674<img src=".\outliers\original\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9674 <BR>
+    <img src=".\outliers\original\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\2c6d253e-19d4-4b78-b86b-cd5d0643591a_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>7</td>
-    <td>Dice = 0.9676<img src=".\outliers\original\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9676 <BR>
+    <img src=".\outliers\original\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\3e99254b-8786-423b-8527-b490b7e2373e_Back.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>8</td>
-    <td>Dice = 0.9680<img src=".\outliers\original\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9680 <BR>
+    <img src=".\outliers\original\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\3bd4524b-ac5d-4cc4-8488-a7811aeb9c97_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>9</td>
-    <td>Dice = 0.9690<img src=".\outliers\original\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9690 <BR>
+    <img src=".\outliers\original\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\2e7c71b3-9c5a-48c1-8d43-f71fae5ee2d0_FrontRight.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>10</td>
-    <td>Dice = 0.9720<img src=".\outliers\original\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9720 <BR>
+    <img src=".\outliers\original\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\0dbe8c50-4276-452e-9036-370df5f6a02d_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>11</td>
-    <td>Dice = 0.9726<img src=".\outliers\original\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9726 <BR>
+    <img src=".\outliers\original\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\3b4b98b4-4d0d-47e3-ad29-938a0dc48c1e_Back.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>12</td>
-    <td>Dice = 0.9728<img src=".\outliers\original\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9728 <BR>
+    <img src=".\outliers\original\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\2a167575-fa9a-4b31-9e9a-1c40cf82095e_Back.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
   <tr>
     <td>13</td>
-    <td>Dice = 0.9737<img src=".\outliers\original\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=100 width=100></img></td> 
+    <td>Dice = 0.9737 <BR>
+    <img src=".\outliers\original\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=135 width=135></img></td> 
     <td><img src=".\outliers\masks\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=200 width=200></img></td> 
     <td><img src=".\outliers\predicted_masks\0ebc6be7-e98f-4950-93b3-06e6b8db3b6d_Front.png" alt="" border=3 height=200 width=200></img></td> 
   </tr>
@@ -1215,6 +1247,10 @@ cutout process but it is showing us that it almost doable for the simplest
 garments and that a ML approach will eventually allow full automation for the 
 majority of garments. 
 
+<BR>
+<BR>
+<BR>
+<BR>
 
 ## V. Conclusion
 
