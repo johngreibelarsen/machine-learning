@@ -1,3 +1,7 @@
+""" 
+    Implementation of our Dice coefficient and associated loss function 
+"""
+
 from keras.losses import binary_crossentropy
 import keras.backend as K
 
