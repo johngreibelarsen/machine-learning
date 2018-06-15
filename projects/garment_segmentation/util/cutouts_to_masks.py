@@ -43,12 +43,13 @@ def show_cutouts_and_masks(orig_img_path, cutout_paths):
         the the calculated cut-out image (using original and calculated mask)
     """
     for root, dirnames, filenames in os.walk(cutout_paths):
+        print(len(filenames))
         for filename in tqdm(filenames):
             orig_image = cv2.imread(orig_img_path + filename)
             cutout_image = cv2.imread(cutout_path + filename, cv2.IMREAD_UNCHANGED)
             cutout_mask = turn_image_to_mask(cutout_image)
             
-            fig = plt.figure(figsize=(32, 32))
+            fig = plt.figure(figsize=(20, 20))
         
             imgplt = fig.add_subplot(1, 3, 1)
             imgplt.set_title("Original")
@@ -68,9 +69,9 @@ def show_cutouts_and_masks(orig_img_path, cutout_paths):
         
 # Demo of how DCIL or ISI cutouts are turned into binary masks
 if __name__ == '__main__':
-    orig_img_path = "../input/original/*.*"
-    cutout_path = "../input/segmented/"
-    #show_cutouts_and_masks(orig_img_path, cutout_path)
+    orig_img_path = "../input/demonstration_set/original/"
+    cutout_path = "../input/demonstration_set/cutout/"
+    show_cutouts_and_masks(orig_img_path, cutout_path)
     
-    save_mask_path = "../input/masks/"    
-    cutouts_to_masks(cutout_path, save_mask_path)
+    #save_mask_path = "../input/demonstration_set/mask/"    
+    #cutouts_to_masks(cutout_path, save_mask_path)
