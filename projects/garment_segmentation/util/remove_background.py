@@ -39,9 +39,9 @@ def save_focused_garment_list(orig_img_path, mask_path, img_no_background_path):
                 
 # Demo of how background gets reduce to a minimum based on original images + Alpha masks
 if __name__ == '__main__':
-    orig_img_path = "../input/test_garment_set/original/"
-    mask_path = "../input/test_garment_set/masks/"
-    img_no_background_path = "../input/test_garment_set/original_no_backgroung/"
+    orig_img_path = "../input/demonstration_set/original/"
+    mask_path = "../input/demonstration_set/mask/"
+    img_no_background_path = "../input/demonstration_set/original_no_background/"
     save_focused_garment_list(orig_img_path, mask_path, img_no_background_path)
     
     
