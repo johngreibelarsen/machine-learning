@@ -43,7 +43,6 @@ def show_cutouts_and_masks(orig_img_path, cutout_paths):
         the the calculated cut-out image (using original and calculated mask)
     """
     for root, dirnames, filenames in os.walk(cutout_paths):
-        print(len(filenames))
         for filename in tqdm(filenames):
             orig_image = cv2.imread(orig_img_path + filename)
             cutout_image = cv2.imread(cutout_path + filename, cv2.IMREAD_UNCHANGED)
