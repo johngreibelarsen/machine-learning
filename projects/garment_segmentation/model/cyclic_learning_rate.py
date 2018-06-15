@@ -1,3 +1,7 @@
+""" 
+    Helper function to illustrate the shape and form of our bespoke learning rate function 
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt  
 
@@ -25,10 +29,7 @@ def plateau_then_triangular_lr(epochs):
     lr = min_lr + (max_lr - min_lr) * np.maximum(0, (1-x))
     return lr
 
-plateau_steps = 2
-step_size = 10
-min_lr = 5e-5
-max_lr = 5e-4
+
 
 def plateau_then_decl_triangular_lr(epochs):    
     """
@@ -49,7 +50,7 @@ def plateau_then_decl_triangular_lr(epochs):
 
 
 def show_function(lr_function):
-    """ Helper function to illustrate how shape and form of learning rate function """
+    """ Helper function to illustrate the shape and form of our bespoke learning rate function """
     epochs = 100
     lr_trend = list()
     for epoch in range(epochs):
@@ -66,4 +67,3 @@ def show_function(lr_function):
 # Demo of how the LR varies with epocs
 if __name__ == '__main__':
     show_function(plateau_then_decl_triangular_lr)
-
