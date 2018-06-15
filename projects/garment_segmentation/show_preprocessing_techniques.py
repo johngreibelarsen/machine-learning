@@ -43,21 +43,18 @@ def show_preprocessed_image(img_gray, img_color):
     imgplt.set_title("Un-processed image")
     plt.hist(img_gray.flatten(),256,[0,256], color = 'r')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)
     
     imgplt = fig.add_subplot(1, 3, 2)
     imgplt.set_title("Histogram equalization")
     plt.hist(eq_hist_img.flatten(),256,[0,256], color = 'g')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)
     
     imgplt = fig.add_subplot(1, 3, 3)
     imgplt.set_title("Contrast stretching")
     plt.hist(contrast_strech_img.flatten(),256,[0,256], color = 'b')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)
 
 #------------------Color stuff -------------------------------
@@ -94,21 +91,18 @@ def show_preprocessed_image(img_gray, img_color):
     imgplt.set_title("Un-processed image")
     plt.hist(img_color.flatten(),256,[0,256], color = 'r')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)
     
     imgplt = fig.add_subplot(1, 3, 2)
     imgplt.set_title("Histogram equalization")
     plt.hist(eq_hist_color_img.flatten(),256,[0,256], color = 'g')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)
     
     imgplt = fig.add_subplot(1, 3, 3)
     imgplt.set_title("Contrast stretching")
     plt.hist(contrast_strech_color_img.flatten(),256,[0,256], color = 'b')
     plt.xlim([0,256])
-    #plt.yscale('log')
     plt.grid(True)    
 
 
@@ -118,7 +112,7 @@ Demo showing original image next to our contrast enhanced techniques:
     - Contrast stretching    
 '''
 if __name__ == '__main__':
-    img_orig_paths = "./input/test_garment_set/original/*.*"
+    img_orig_paths = "./input/demonstration_set/original/*.*"
     img_path = sorted(glob.glob(img_orig_paths))
     for file in img_path:
         img_color = cv2.imread(file)
