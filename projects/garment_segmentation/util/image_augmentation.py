@@ -1,8 +1,13 @@
+"""
+In our code, we’re using the functions from petrosgk’s Carvana example 
+(https://github.com/petrosgk/Kaggle-Carvana-Image-Masking-Challenge/blob/master/train.py) 
+to randomly alter the hue, saturation, and value of the image (HSV color space), 
+and to randomly shift, scale, rotate as well as horisontally flip the image.
+"""
 import cv2
 import numpy as np
 import glob
 import matplotlib.pyplot as plt  
-
 
 import params
 
@@ -11,6 +16,10 @@ input_size = params.input_size
 batch_size = params.batch_size
 
 
+"""
+Randomly alter the hue (color), saturation (grayness), and value (brightness) of the 
+image (HSV color space)
+"""
 def randomHueSaturationValue(image, hue_shift_limit=(0, 179), sat_shift_limit=(0, 255),
                              val_shift_limit=(0, 255), u=0.5):
     if np.random.random() < u:
@@ -28,6 +37,9 @@ def randomHueSaturationValue(image, hue_shift_limit=(0, 179), sat_shift_limit=(0
     return image
 
 
+"""
+Randomly shift, scale (zoom) and rotate imagery
+"""
 def randomShiftScaleRotate(image, mask,
                            shift_limit=(-0.0625, 0.0625),
                            scale_limit=(-0.1, 0.1),
@@ -63,6 +75,9 @@ def randomShiftScaleRotate(image, mask,
     return image, mask
 
 
+"""
+Randomly flip image horizontally
+"""
 def randomHorizontalFlip(image, mask, u=0.5):
     if np.random.random() < u:
         image = cv2.flip(image, 1)
@@ -71,7 +86,65 @@ def randomHorizontalFlip(image, mask, u=0.5):
     return image, mask
 
 
+"""
+Training generator using all of the above image manipulations to generate 
+augmented images
+"""
 def train_generator(img_fnames, seg_fnames):
+    while True:
+        for start in range(0, len(img_fnames), batch_size):
+            x_batch = []
+            y_batch = []
+            end = min(start + batch_size, len(img_fnames))
+            for index in range(start, end):
+                img = cv2.imread(img_fnames[index])
+                img = cv2.resize(img, (input_size, input_size))                
+                seg = cv2.imread(seg_fnames[index], cv2.IMREAD_GRAYSCALE)
+                seg = cv2.resize(seg, (input_size, input_size))
+                img = randomHueSaturationValue(img,
+                                               hue_shift_limit=(-50, 50),
+                                               sat_shift_limit=(-5, 5),
+                                               val_shift_limit=(-15, 15))
+                img, mask = randomShiftScaleRotate(img, seg,
+                                                   shift_limit=(-0.01, 0.01),
+                                                   scale_limit=(-0.1, 0.1),
+                                                   rotate_limit=(-5, 5))
+                img, seg = randomHorizontalFlip(img, seg)
+                seg = np.expand_dims(seg, axis=2)
+                x_batch.append(img)
+                y_batch.append(seg)
+            x_batch = np.array(x_batch, np.float32) / 255
+            y_batch = np.array(y_batch, np.float32) / 255
+            yield x_batch, y_batch
+
+
+"""
+This is the augmentation configuration we will use for validation. Note there are no 
+data augmentation for validation data             
+"""
+def valid_generator(img_fnames, seg_fnames):
+    while True:
+        for start in range(0, len(img_fnames), batch_size):
+            x_batch = []
+            y_batch = []
+            end = min(start + batch_size, len(img_fnames))
+            for index in range(start, end):
+                img = cv2.imread(img_fnames[index])
+                img = cv2.resize(img, (input_size, input_size))
+                seg = cv2.imread(seg_fnames[index], cv2.IMREAD_GRAYSCALE)
+                seg = cv2.resize(seg, (input_size, input_size))
+                seg = np.expand_dims(seg, axis=2)
+                x_batch.append(img)
+                y_batch.append(seg)
+            x_batch = np.array(x_batch, np.float32) / 255
+            y_batch = np.array(y_batch, np.float32) / 255
+            yield x_batch, y_batch      
+            
+        
+"""
+Test training generator for visualizing the effect of augmentation on our imagery
+"""
+def visualize_train_generator(img_fnames, seg_fnames):
     orig_list = []
     orig_mask_list = []    
     argmented_list = []
@@ -90,9 +163,9 @@ def train_generator(img_fnames, seg_fnames):
                                        sat_shift_limit=(0, 25),
                                        val_shift_limit=(0, 25))
         img, seg = randomShiftScaleRotate(img, seg,
-                                           shift_limit=(-0.05, 0.05),
+                                           shift_limit=(-0.1, 0.1),
                                            scale_limit=(-0.1, 0.1),
-                                           rotate_limit=(-0, 0))
+                                           rotate_limit=(-5, 5))
         img, seg = randomHorizontalFlip(img, seg)
         #seg = np.expand_dims(seg, axis=2)
         argmented_list.append(img)
@@ -100,32 +173,17 @@ def train_generator(img_fnames, seg_fnames):
     return orig_list, orig_mask_list, argmented_list, argmented_mask_list
 
 
-def valid_generator(img_fnames, seg_fnames):
-    for start in range(0, len(img_fnames), batch_size):
-        x_batch = []
-        y_batch = []
-        end = min(start + batch_size, len(img_fnames))
-        for index in range(start, end):
-            img = cv2.imread(img_fnames[index])
-            img = cv2.resize(img, (input_size, input_size))
-            seg = cv2.imread(seg_fnames[index], cv2.IMREAD_GRAYSCALE)
-            seg = cv2.resize(seg, (input_size, input_size))
-            seg = np.expand_dims(seg, axis=2)
-            x_batch.append(img)
-            y_batch.append(seg)
-    return x_batch, y_batch
-            
-            
+""" Visualize the effect of the test training generator """
 if __name__ == '__main__':
-    img_orig_path = "../input/test_garment_masks/original/*.*"
+    img_orig_path = "../input/demonstration_set/original/*.*"
     img_orig_list = sorted(glob.glob(img_orig_path))
-    img_mask_path = "../input/test_garment_masks/masks/*.*"
+    img_mask_path = "../input/demonstration_set/mask/*.*"
     img_mask_list = sorted(glob.glob(img_mask_path))
-    for epocs in range(0, 10):        
-        orig_list, orig_mask_list, argmented_list, argmented_mask_list = train_generator(img_orig_list, img_mask_list)
+    for epocs in range(0, 3):        
+        orig_list, orig_mask_list, argmented_list, argmented_mask_list = visualize_train_generator(img_orig_list, img_mask_list)
         for i in range(len(orig_list)):
             
-            fig = plt.figure(figsize=(18, 18))
+            fig = plt.figure(figsize=(15, 15))
             imgplt = fig.add_subplot(1, 4, 1)
             imgplt.set_title("Original")           
             plt.imshow(orig_list[i])
