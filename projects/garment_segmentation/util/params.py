@@ -13,7 +13,7 @@ orig_height = 1728 # original height of image
 model_lr=3e-4 # The default learning rate that the a selected model is born with
 input_size = 1024 # The image input size to the model: 128, 256, 512 or 1024
 max_epochs = 100 # Max epochs to use for training
-batch_size = 8 # Batch size to use for reading and processing images
+batch_size = 3 # Batch size to use for reading and processing images
 model_factory = get_unet_1024 # The model choosen
 
 

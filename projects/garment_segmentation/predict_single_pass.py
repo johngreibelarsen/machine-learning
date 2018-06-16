@@ -22,9 +22,9 @@ def generate_mask(img):
     img = np.array(img, np.float32) / 255
     img = np.expand_dims(img, axis=0)
     
-    out_path = "./weights/"    
-    img_mean = np.load(out_path + "unet_no_mask_1024_meanstd_downsize_optimized_mean.npy")
-    img_std = np.load(out_path + "unet_no_mask_1024_meanstd_downsize_optimized_std.npy")
+    out_path = "./normalization/"    
+    img_mean = np.load(out_path + "unet_no_focus_mask_1024_meanstd_resize_optimized_mean.npy")
+    img_std = np.load(out_path + "unet_no_focus_mask_1024_meanstd_resize_optimized_std.npy")
     
 #    out_path = "./input_CP/"    
 #    img_mean = np.load(out_path + "original_mean.npy")
