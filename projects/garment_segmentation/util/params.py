@@ -28,6 +28,9 @@ max_lr = 7e-4 # Max LR
 threshold = 0.45 # the probability threshold above which a pixel is decided as part of the image mask
 threshold_when_focused = 0.60 # the probability threshold when using a focused/dilated mask
 
+# Centering and normalizing inout data matrixes
+centering_mean_path = './normalization/unet_no_focus_mask_1024_meanstd_resize_optimized_mean.npy'
+normalizing_std_path = './normalization/unet_no_focus_mask_1024_meanstd_resize_optimized_std.npy'
 
 # Model weights to use for predictions
 weight_no_focus_path = './weights/unet_no_focus_mask_1024_meanstd_resize_optimized.hdf5'
