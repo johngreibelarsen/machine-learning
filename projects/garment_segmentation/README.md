@@ -38,7 +38,7 @@ Both folders contain the raw images in 'original folder', the photoshop created 
 Contains the functionality of the ML NN model plus loss function, Dice implementation and cyclic learning rate functions.
 
 #### Normalization folder
-Contains the matrixes needed for centering and normalizing out input data.
+Contains the matrixes needed for centering and normalizing our input data.
 
 #### Notebooks folder
 Contains a number of notebooks that has been used in various experiments. The three main notebooks are located directly in the folder itself and are for:
@@ -60,13 +60,13 @@ Contains utility scripts in form of:
 Location of where our solution will be looking for the weight files. Note: they will need to be downloaded separately from Dropbox.
 
 #### Root folder
-Contains three group of files:
-* Udacity reports in for of capstone_proposal.pdf and capstone_report.pdf
-* Single and double predictor implementations (predict_single_pass + predict_double_pass)
+Contains three groups of files:
+* Udacity reports in form of capstone_proposal.pdf and capstone_report.pdf
+* Single and double predictor implementations (predict_single_pass and predict_double_pass)
 * Scripts to illustrate various metrics and performance of solution:
   
   - calc_metrics_and_visualize: utility script for calculating Dice scores for data set and visualizing the performance of the predicted masks
-  - show_garment_results: showing original image next to our prediction masks followed by DCIL/ISI cut-out mask and finally the effect of applying our mask to the original image
+  - show_garment_results: showing original image next to our prediction mask followed by DCIL/ISI cut-out mask and finally the effect of applying our mask to the original image
   - show_preprocessing_techniques: illustrates the effect of histogram equalization and contrast stretching techniques on gray and color images 
 
 
@@ -83,7 +83,7 @@ Should be placed in the weights folder.
 
 
 ### Training the Model
-To train the model it is recommended to grab the Jupyter notebook 'final_unet_no_mask_1024_meanstd_resize_optimized.ipynb' and update paths to input files and output files such as weight and normalization files appropriately. Obviously this also applies to any experimentation. 
+To train the model it is recommended to grab the Jupyter notebook 'final_unet_no_mask_1024_meanstd_resize_optimized.ipynb' and update paths to input files, to output files such as weight and normalization files. Obviously this also applies to any experimentation. 
 
 
 ### Getting the predictions
