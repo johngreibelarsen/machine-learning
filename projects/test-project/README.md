@@ -1,1 +1,0 @@
-Repository for various machine learning projects and activities.
